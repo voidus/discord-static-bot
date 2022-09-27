@@ -1,28 +1,37 @@
 {
-  description = "A very basic flake";
+  description = "Discord bot to manage private static channels";
 
   inputs = {
     flake-utils.url = "github:numtide/flake-utils";
+    nixpkgs.url = "github:NixOS/nixpkgs";
+    poetry2nix.url = "github:nix-community/poetry2nix";
   };
 
-  outputs = { self, nixpkgs, flake-utils }: flake-utils.lib.eachDefaultSystem (system:
-    let
-      pkgs = nixpkgs.legacyPackages.${system};
-    in
+  outputs = { self, nixpkgs, flake-utils, poetry2nix }:
     {
-      devShell = pkgs.mkShell {
-        packages = [
-          pkgs.black
-        ];
-        buildInputs = [
-          (pkgs.python310.withPackages (ps: with ps; [
-            ipython
+      # Nixpkgs overlay providing the application
+      overlay = nixpkgs.lib.composeManyExtensions [
+        poetry2nix.overlay
+        (final: prev: {
+          discord-static-bot = prev.poetry2nix.mkPoetryApplication {
+            projectDir = ./.;
+          };
+        })
+      ];
+    } // (flake-utils.lib.eachDefaultSystem (system:
+      let
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [ self.overlay ];
+        };
+      in
+      {
+        apps = {
+          default = pkgs.discord-static-bot;
+        };
 
-            pytest
-            discordpy
-          ]))
-        ];
-      };
-    });
-
+        devShell = pkgs.mkShell {
+          packages = [ pkgs.poetry ];
+        };
+      }));
 }

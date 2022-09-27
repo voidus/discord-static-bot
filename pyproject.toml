@@ -1,0 +1,26 @@
+[tool.poetry]
+name = "discord-static-bot"
+version = "0.1.0"
+description = "Discord bot to manage private static channels"
+authors = []
+license = "MIT"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+py-cord = "^2.1.3"
+result = "^0.8.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.1.3"
+ipython = "^8.5.0"
+black = "^22.8.0"
+isort = "^5.10.1"
+pdbpp = "^0.10.3"
+pyright = "^1.1.272"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+discord-static-bot = "discord_static_bot.main:main"
