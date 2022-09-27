@@ -13,7 +13,7 @@ class Config:
     bots_role_id: int
     blacklist_role_id: Optional[int]
     whitelist_role_id: Optional[int]
-    one_channel_role_id: Optional[str]
+    one_channel_role_id: Optional[int]
 
     @classmethod
     def load(cls, token_file: Path, config_file: Path):
