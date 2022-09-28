@@ -24,3 +24,6 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
 discord-static-bot = "discord_static_bot.main:main"
+
+[tool.isort]
+profile = "black"

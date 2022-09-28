@@ -1,27 +1,24 @@
 from __future__ import annotations
-from asyncio import gather
-import re
 
-from typing import Iterable, Literal, Union
-from discord.abc import Messageable
+import re
+from asyncio import gather
+from typing import Iterable, Literal
+
+import discord.utils
 from discord import (
     ApplicationCommandError,
     ApplicationContext,
     Bot,
     CategoryChannel,
     CheckFailure,
-    ForumChannel,
     Guild,
     Member,
     Message,
     Option,
-    PartialMessageable,
-    StageChannel,
     TextChannel,
-    Thread,
-    VoiceChannel,
     guild_only,
 )
+from discord.interactions import InteractionChannel
 
 from .config import Config
 
@@ -32,13 +29,6 @@ from .config import Config
 #                           from outside the server)
 # - Figure out if we can drop the /help or still need it
 #
-# --
-#
-# Commands:
-# - /last_message (DM + admin)
-# - /add (in category)
-# - /remove (in category)
-# - /clear (In category)
 #
 # Open questions
 # --------------
@@ -50,18 +40,17 @@ from .config import Config
 # - Remove the hack below once https://github.com/Pycord-Development/pycord/issues/1649 is fixed
 # - Autocomplete once https://github.com/Pycord-Development/pycord/issues/1630 is released
 
-# OH THE HORRORS https://github.com/Pycord-Development/pycord/issues/1649
-import discord.utils
 
+class UserVisibleError(Exception):
+    pass
+
+
+# OH THE HORRORS https://github.com/Pycord-Development/pycord/issues/1649
 discord.utils._MissingSentinel._get_overridden_method = lambda *args, **kwargs: None  # type: ignore
 discord.utils._MissingSentinel.cog_check = lambda *args, **kwargs: True  # type: ignore
 discord.utils._MissingSentinel.cog_before_invoke = lambda *args, **kwargs: None  # type: ignore
 discord.utils._MissingSentinel.cog_after_invoke = lambda *args, **kwargs: None  # type: ignore
 discord.utils._MissingSentinel.cog_command_error = lambda *args, **kwargs: None  # type: ignore
-
-
-class UserVisibleError(Exception):
-    pass
 
 
 static_name_re = re.compile("[a-z][a-z0-9-]*")
@@ -96,11 +85,14 @@ def make_bot(config: Config) -> Bot:
                         await ctx.respond(
                             f"Sorry, that feature isn't implemented yet. We're working on it!"
                         )
+                    case _:
+                        await Bot.on_application_command_error(bot, ctx, exception)
             case _:
                 await Bot.on_application_command_error(bot, ctx, exception)
 
-    ########
-    # Checks
+    ##########
+    # Checks #
+    ##########
 
     def admin(ctx: ApplicationContext) -> Literal[True]:
         match ctx.author:
@@ -114,17 +106,18 @@ def make_bot(config: Config) -> Bot:
                     "Couldn't determine roles. Maybe you're using the command in a dm? It only works on the server."
                 )
 
-    def in_static_category(ctx: ApplicationContext) -> Literal[True]:
+    def in_our_category(ctx: ApplicationContext) -> Literal[True]:
         match ctx.channel:
             case None:
                 raise UserVisibleError("Not sent through a channel?!?")
-            case object(category=config.category_id):
+            case object(category_id=config.category_id):
                 return True
             case _:
                 raise CheckFailure("Only allowed in the private-statics category")
 
-    #########
-    # Helpers
+    ###########
+    # Helpers #
+    ###########
 
     def our_guild(ctx: ApplicationContext) -> Guild:
         match ctx.guild:
@@ -133,8 +126,7 @@ def make_bot(config: Config) -> Bot:
             case _:
                 raise CheckFailure("These commands are only allowed on the server")
 
-    def our_category(ctx: ApplicationContext) -> CategoryChannel:
-        guild = our_guild(ctx)
+    def our_category(ctx: ApplicationContext, guild: Guild) -> CategoryChannel:
         try:
             [category] = [
                 c for c in our_guild(ctx).categories if c.id == config.category_id
@@ -148,8 +140,71 @@ def make_bot(config: Config) -> Bot:
             )
         return category
 
-    ##########
-    # Commands
+    def get_guild_member(guild: Guild, name: str) -> Member:
+        member = guild.get_member_named(name)
+        if member is None:
+            raise CheckFailure("That member doesn't exist. Are they on the server?")
+        if any(r.id == config.bots_role_id for r in member.roles):
+            raise CheckFailure("Not operating on bots")
+        return member
+
+    def channel_members(channel: TextChannel) -> Iterable[Member]:
+        match channel:
+            case TextChannel():
+                return (m for m in channel.members if not m.bot)
+            case _:
+                raise UserVisibleError(f"Cannot get members of {type(channel)}")
+
+    def ensure_text_channel(channel: InteractionChannel | None) -> TextChannel:
+        if channel is None:
+            raise UserVisibleError("No channel?!?")
+        if not isinstance(channel, TextChannel):
+            raise CheckFailure("Only works in text channels in the static category")
+        return channel
+
+    def get_static_channel(category, name) -> TextChannel | None:
+        assert name.startswith("static-")
+        try:
+            [channel] = [channel.name == name for channel in category.channels]
+            return channel
+        except ValueError:
+            return None
+
+    async def creator(channel: TextChannel) -> Member:
+        try:
+            [first_message] = await channel.history(
+                limit=1, oldest_first=True
+            ).flatten()
+            [creator, *_] = first_message.mentions
+        except ValueError:
+            raise CheckFailure(f"Failed to determine creator of {channel.name}")
+        if not isinstance(creator, Member):
+            raise UserVisibleError(
+                f"Expected creator to be a Member, but it's actually a {type(creator)}"
+            )
+        return creator
+
+    def is_admin(member: Member) -> bool:
+        return any(r.id == config.admin_role_id for r in member.roles)
+
+    def has_one_channel_role(member: Member) -> bool:
+        return any(role.id == config.one_channel_role_id for role in member.roles)
+
+    ############
+    # Commands #
+    ############
+
+    @bot.slash_command()
+    async def ping(ctx: ApplicationContext):
+        """Check if bot connection is working"""
+        await ctx.respond("pong", ephemeral=True)
+
+    @bot.slash_command()
+    async def check_config(ctx: ApplicationContext):
+        raise NotImplementedError()
+
+    ###################
+    # Static management
 
     static = bot.create_group("static", description="Manage channels for statics")
 
@@ -171,13 +226,9 @@ def make_bot(config: Config) -> Bot:
             raise UserVisibleError(
                 f"Expected author to be a Member but got {type(ctx.author)}"
             )
-        category = our_category(ctx)
+        category = our_category(ctx, guild)
 
         # Permission checks
-        admin_role = guild.get_role(config.admin_role_id)
-        if admin_role is None:
-            raise UserVisibleError("admin role not found")
-
         one_channel_role = (
             guild.get_role(config.one_channel_role_id)
             if config.one_channel_role_id
@@ -185,8 +236,8 @@ def make_bot(config: Config) -> Bot:
         )
         if (
             one_channel_role
-            and not any(r.id == config.admin_role_id for r in ctx.author.roles)
-            and any(role.id == config.one_channel_role_id for role in ctx.author.roles)
+            and not is_admin(ctx.author)
+            and has_one_channel_role(ctx.author)
         ):
             raise CheckFailure(
                 "You cannot create more than one channel. "
@@ -195,9 +246,7 @@ def make_bot(config: Config) -> Bot:
 
         # Parameter checks
         name = clean_static_name(name)
-
-        # Collision checks
-        if any(channel.name == name for channel in guild.channels):
+        if get_static_channel(category, name) is not None:
             raise CheckFailure(
                 "Static with that name already exists, please pick another one"
             )
@@ -230,9 +279,10 @@ def make_bot(config: Config) -> Bot:
         ],
         checks=[admin],
     )
+    @guild_only()
     async def delete(_cog, ctx: ApplicationContext, name: str):
         guild = our_guild(ctx)
-        category = our_category(ctx)
+        category = our_category(ctx, guild)
         one_channel_role = (
             guild.get_role(config.one_channel_role_id)
             if config.one_channel_role_id
@@ -243,49 +293,150 @@ def make_bot(config: Config) -> Bot:
 
         # Parameter checks
         name = clean_static_name(name)
-        try:
-            [channel] = [c for c in category.channels if c.name == name]
-        except ValueError:
+        channel = get_static_channel(category, name)
+        if channel is None:
             raise CheckFailure(f"Couldn't find channel {name}")
-        if not isinstance(channel, TextChannel):
-            raise CheckFailure(f"{name} is not a text channel")
 
         if one_channel_role:
             # Find creator and remove one_channel_role
-            try:
-                [first_message] = await channel.history(
-                    limit=1, oldest_first=True
-                ).flatten()
-                [creator, *_] = first_message.mentions
-            except ValueError:
-                raise CheckFailure(f"Failed to determine owner of {name}")
-            if not isinstance(creator, Member):
-                raise UserVisibleError(
-                    f"Expected creator to be a Member, but it's actually a {type(creator)}"
-                )
-            await creator.remove_roles(one_channel_role)
+            await (await creator(channel)).remove_roles(one_channel_role)
 
         await channel.delete(reason=f"{ctx.author.name} asked to remove it")
         await ctx.respond(f"Group {name} deleted.", ephemeral=True)
 
-    @bot.slash_command()
-    async def ping(ctx: ApplicationContext):
-        """Check if bot connection is working"""
-        await ctx.respond("pong", ephemeral=True)
-
-    @bot.slash_command()
-    @guild_only()
-    async def members(ctx: ApplicationContext):
-        """List channel members"""
-        channel = ctx.channel
-        if channel is None:
-            raise UserVisibleError("No channel ?!?")
-
-        if not isinstance(channel, Messageable):
-            raise UserVisibleError(
-                f"Cannot send message to channel type {type(channel)}"
+    @static.command(
+        options=[
+            Option(
+                name="limit",
+                input_type=int,
+                description="Delete this many recent messages",
             )
+        ],
+        checks=[admin, in_our_category],
+    )
+    @guild_only()
+    async def clear(_cog, ctx: ApplicationContext, limit: str):
+        """Deletes recent messages from the channel"""
+        limit_int = int(limit)
+        channel = ensure_text_channel(ctx.channel)
 
+        await channel.purge(limit=limit_int)
+        await ctx.respond(f"Deleted {limit_int} messages", ephemeral=True)
+
+    @static.command(name="list", checks=[admin])
+    @guild_only()
+    async def static_list(_cog, ctx: ApplicationContext):
+        """List all statics along with the time that the last messag was sent"""
+
+        async def creator_string(channel: TextChannel):
+            try:
+                return (await creator(channel)).name
+            except CheckFailure as e:
+                return f"<Error>"
+
+        async def last_message(channel: TextChannel) -> str:
+            last_message = await channel.history(limit=1).flatten()
+            try:
+                return last_message[0].created_at.date().isoformat()
+            except ValueError:
+                return "???"
+
+        async def channel_data(channel: TextChannel):
+            [c, l] = await gather(creator_string(channel), last_message(channel))
+            return {
+                "name": channel.name,
+                "creator": c,
+                "last_message": l,
+            }
+
+        guild = our_guild(ctx)
+        channels = await gather(
+            *[
+                channel_data(channel)
+                for channel in our_category(ctx, guild).channels
+                if isinstance(channel, TextChannel)
+                and channel.name.startswith("static-")
+            ]
+        )
+
+        channels = sorted(channels, key=lambda entry: entry["last_message"])
+
+        await ctx.respond(
+            "\n".join(
+                [
+                    "These are the statics on the server",
+                    *[
+                        " - ".join(
+                            [
+                                c["name"],
+                                f"Last message on {c['last_message']}",
+                                f"Creator: {c['creator']}",
+                            ]
+                        )
+                        for c in channels
+                    ],
+                    "",
+                    (
+                        "Be aware that creator information might not be accurate if "
+                        "the welcome message has been deleted or modified"
+                    ),
+                ]
+            ),
+            ephemeral=True,
+        )
+
+    ###################
+    # Member management
+
+    member = bot.create_group("member", description="Manage members")
+
+    @member.command(
+        options=[
+            Option(
+                input_type=str,
+                name="name",
+                description="Discord name (NAME#12345) of the server member to add",
+            )
+        ],
+        checks=[in_our_category],
+    )
+    @guild_only()
+    async def add(_cog, ctx: ApplicationContext, name: str):
+        guild = our_guild(ctx)
+        channel = ensure_text_channel(ctx.channel)
+
+        member = get_guild_member(guild, name)
+
+        await channel.set_permissions(member, view_channel=True)
+        await ctx.respond(f"Folks, say welcome to {member.name}!")
+
+    @member.command(
+        options=[
+            Option(
+                input_type=str,
+                name="name",
+                description="Discord name (NAME#12345) of the static member to add",
+            )
+        ],
+        checks=[in_our_category],
+    )
+    @guild_only()
+    async def remove(_cog, ctx: ApplicationContext, name: str):
+        guild = our_guild(ctx)
+        channel = ensure_text_channel(ctx.channel)
+
+        member = get_guild_member(guild, name)
+        if not channel.permissions_for(member).view_channel:
+            raise CheckFailure("That member is not in the channel")
+
+        await channel.set_permissions(member, overwrite=None)
+        await ctx.respond(f"Guys, say goodbye to {member.name}")
+
+    @member.command(name="list")
+    @guild_only()
+    async def member_list(_cog, ctx: ApplicationContext):
+        """List channel members"""
+        channel = ensure_text_channel(ctx.channel)
         members = channel_members(channel)
 
         await ctx.respond(
@@ -298,6 +449,9 @@ def make_bot(config: Config) -> Bot:
             ephemeral=True,
         )
 
+    ###############
+    # Communication
+
     @bot.slash_command(
         options=[
             Option(
@@ -307,20 +461,12 @@ def make_bot(config: Config) -> Bot:
                 required=False,
             )
         ],
-        checks=[in_static_category],
+        checks=[in_our_category],
     )
     @guild_only()
     async def mention(ctx: ApplicationContext, message: str):
         """Mention everyone in the channel"""
-        channel = ctx.channel
-        if channel is None:
-            raise UserVisibleError("No channel?!?")
-
-        if not isinstance(channel, Messageable):
-            raise UserVisibleError(
-                f"Cannot send message to channel type {type(channel)}"
-            )
-
+        channel = ensure_text_channel(ctx.channel)
         members = channel_members(channel)
         await ctx.respond(
             "\n".join(
@@ -334,14 +480,14 @@ def make_bot(config: Config) -> Bot:
     ######
     # Pins
 
-    @bot.message_command()
+    @bot.message_command(checks=[in_our_category])
     @guild_only()
     async def pin(ctx: ApplicationContext, message: Message):
         """Add the message to the channel pins"""
         await message.pin(reason=f"pinned by {message.author.name}")
         await ctx.respond("pinned it :)")
 
-    @bot.message_command()
+    @bot.message_command(checks=[in_our_category])
     @guild_only()
     async def unpin(ctx: ApplicationContext, message: Message):
         """Remove the message from the channel pins"""
@@ -349,26 +495,3 @@ def make_bot(config: Config) -> Bot:
         await ctx.respond("unpinned it :)")
 
     return bot
-
-
-def channel_members(
-    channel: Union[
-        VoiceChannel,
-        StageChannel,
-        TextChannel,
-        ForumChannel,
-        CategoryChannel,
-        Thread,
-        PartialMessageable,
-    ]
-) -> Iterable[Member]:
-    match channel:
-        case PartialMessageable() | CategoryChannel():
-            raise UserVisibleError(f"Cannot get members of {type(channel)}")
-        case Thread():
-            parent = channel.parent
-            if parent is None:
-                raise UserVisibleError("thread without parent?!?")
-            return (m for m in parent.members if not m.bot)
-        case _:
-            return (m for m in channel.members if not m.bot)
