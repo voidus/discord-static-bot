@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from asyncio import gather
-from typing import Iterable, Literal
+from typing import TYPE_CHECKING, Iterable, Literal
 
 import discord.utils
 from discord import (
@@ -18,7 +18,9 @@ from discord import (
     TextChannel,
     guild_only,
 )
-from discord.interactions import InteractionChannel
+
+if TYPE_CHECKING:
+    from discord.interactions import InteractionChannel
 
 from .config import Config
 
