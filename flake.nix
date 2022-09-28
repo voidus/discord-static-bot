@@ -26,8 +26,16 @@
         };
       in
       {
-        apps = {
+        packages = {
           default = pkgs.discord-static-bot;
+        };
+        apps = {
+          # Note that we manually need to remove setuptools from poetry.lock or this will
+          # break: https://github.com/nix-community/poetry2nix/issues/648
+          default = {
+            type = "app";
+            program = "${pkgs.discord-static-bot}/bin/discord-static-bot";
+          };
         };
 
         devShell = pkgs.mkShell {
