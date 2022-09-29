@@ -3,6 +3,8 @@ import dataclasses
 
 import re
 from asyncio import gather
+import sys
+import traceback
 from typing import TYPE_CHECKING, Iterable, Literal
 
 import discord.utils
@@ -90,7 +92,21 @@ def make_bot(config: Config) -> Bot:
                     case _:
                         await Bot.on_application_command_error(bot, ctx, exception)
             case _:
-                await Bot.on_application_command_error(bot, ctx, exception)
+                # copied from Bot.on_application_command_error since that has special logic which
+                # makes it do nothing if we also want to handle our specific errors
+
+                command = ctx.command
+                if command and command.has_error_handler():
+                    return
+
+                cog = ctx.cog
+                if cog and cog.has_error_handler():
+                    return
+
+                print(f"Ignoring exception in command {ctx.command}:", file=sys.stderr)
+                traceback.print_exception(
+                    type(exception), exception, exception.__traceback__, file=sys.stderr
+                )
 
     ##########
     # Checks #
