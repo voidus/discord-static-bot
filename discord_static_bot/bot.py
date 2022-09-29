@@ -29,11 +29,6 @@ if TYPE_CHECKING:
 
 from .config import Config
 
-# TODO
-# ----
-# - Restrict all calls to server users (if we need that?)
-# - Figure out if we can drop the /help or still need it
-#
 # Open questions
 # --------------
 # - Can we restrict permissions so that commands don't show up where not allowed? discord api
@@ -44,6 +39,7 @@ from .config import Config
 # - Remove the hack below once https://github.com/Pycord-Development/pycord/issues/1649 is fixed
 # - Autocomplete once https://github.com/Pycord-Development/pycord/issues/1630 is released
 # - Audit log
+# - Restrict all calls to server users (if we need that?)
 
 
 class UserVisibleError(Exception):
