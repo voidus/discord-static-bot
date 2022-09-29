@@ -40,6 +40,7 @@ from .config import Config
 # -----------
 # - Remove the hack below once https://github.com/Pycord-Development/pycord/issues/1649 is fixed
 # - Autocomplete once https://github.com/Pycord-Development/pycord/issues/1630 is released
+# - Audit log
 
 
 class UserVisibleError(Exception):
@@ -166,7 +167,9 @@ def make_bot(config: Config) -> Bot:
     def get_static_channel(category, name) -> TextChannel | None:
         assert name.startswith("static-")
         try:
-            [channel] = [channel.name == name for channel in category.channels]
+            [channel] = [
+                channel for channel in category.channels if channel.name == name
+            ]
             return channel
         except ValueError:
             return None
