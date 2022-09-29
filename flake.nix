@@ -13,9 +13,10 @@
       overlay = nixpkgs.lib.composeManyExtensions [
         poetry2nix.overlay
         (final: prev: {
-          discord-static-bot = prev.poetry2nix.mkPoetryApplication {
+          discord-static-bot = (prev.poetry2nix.mkPoetryApplication {
             projectDir = ./.;
-          };
+            doCheck = false;
+          });
         })
       ];
     } // (flake-utils.lib.eachDefaultSystem (system:
@@ -28,6 +29,17 @@
       {
         packages = {
           default = pkgs.discord-static-bot;
+          docker-latest = pkgs.dockerTools.buildImage {
+            name = "discord-static-bot";
+            copyToRoot = with pkgs; [ busybox ];
+            tag = "latest";
+            config = {
+              Env = [
+                "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+              ];
+              EntryPoint = [ "${pkgs.discord-static-bot}/bin/discord-static-bot" ];
+            };
+          };
         };
         apps = {
           # Note that we manually need to remove setuptools from poetry.lock or this will

@@ -42,6 +42,17 @@ as 1) admins can blacklist that user at any time,
 If you feel like you need more security in place, 
 feel free to edit the code and add as much as you need.
 
+# Building a docker image
+
+```
+docker run --rm -v $PWD:/work nixos/nix --extra-experimental-features nix-command\ flakes build /work#docker-latest
+# you could also copy the result file to a server and import it there. Note that result is a symlink
+# and you need to copy the actual file, not the link. Show the filename with `readlink result`
+docker import <result
+```
+
+This is horribly inefficient, especially in regards to network bandwidth. Sorry about that.
+
 # Setup
 
 Create your own bot in https://discord.com/developers/applications
