@@ -1,4 +1,5 @@
 from __future__ import annotations
+import dataclasses
 
 import re
 from asyncio import gather
@@ -16,6 +17,7 @@ from discord import (
     Message,
     Option,
     TextChannel,
+    User,
     guild_only,
 )
 
@@ -27,10 +29,7 @@ from .config import Config
 # TODO
 # ----
 # - Restrict all calls to server users (if we need that?)
-# - Denylist / Allowlist (? does that make sense if we have default-allow? I guess it allows people
-#                           from outside the server)
 # - Figure out if we can drop the /help or still need it
-#
 #
 # Open questions
 # --------------
@@ -192,6 +191,33 @@ def make_bot(config: Config) -> Bot:
     def has_one_channel_role(member: Member) -> bool:
         return any(role.id == config.one_channel_role_id for role in member.roles)
 
+    def as_member(member: User | Member | None) -> Member:
+        if not isinstance(member, Member):
+            raise CheckFailure("The bot only works on a server")
+        return member
+
+    ########################
+    # Common functionality #
+    ########################
+
+    if config.blacklist_role_id is not None:
+
+        @bot.check
+        def denylist(ctx: ApplicationContext) -> Literal[True]:
+            assert config.blacklist_role_id is not None
+            if as_member(ctx.author).get_role(config.blacklist_role_id):
+                raise CheckFailure("You are forbidden from using this bot.")
+            return True
+
+    if config.whitelist_role_id is not None:
+
+        @bot.check
+        def allowlist(ctx: ApplicationContext) -> Literal[True]:
+            assert config.whitelist_role_id is not None
+            if as_member(ctx.author).get_role(config.whitelist_role_id):
+                raise CheckFailure("You are not allowed to using this bot.")
+            return True
+
     ############
     # Commands #
     ############
@@ -201,9 +227,83 @@ def make_bot(config: Config) -> Bot:
         """Check if bot connection is working"""
         await ctx.respond("pong", ephemeral=True)
 
-    @bot.slash_command()
+    @bot.slash_command(checks=[admin])
     async def check_config(ctx: ApplicationContext):
-        raise NotImplementedError()
+        """Admin only: Verify that the bot is configured correctly"""
+        good, bad, unkn = ":white_check_mark:", ":exclamation:", ":grey_question:"
+        checked = {"token"}  # We wouldn't be here if that doesn't work
+
+        lines: list[str] = []
+        mk_line = lambda icon, key, msg: " ".join(
+            [icon, *([key] if key else []), *([f": {msg}"] if msg else [])]
+        )
+        add_line = lambda *a: lines.append(mk_line(*a))
+
+        if not isinstance(ctx.me, Member):
+            raise UserVisibleError(
+                "The bot is not a member. Are you using the command on the server?"
+            )
+
+        if not config.guild_id:
+            add_line(bad, "GUILD_ID", "Missing")
+        else:
+            checked.add("guild_id")
+            ctx.guild
+            if ctx.guild is None or ctx.guild.id != config.guild_id:
+                add_line(unkn, "GUILD_ID", "Configured, but we're not on the server")
+            else:
+                if not config.category_id:
+                    add_line(bad, "CATEGORY_ID", "Not configured")
+                elif not (category := our_category(ctx, ctx.guild)):
+                    add_line(bad, "CATEGORY_ID", "Static category not found")
+                else:
+                    for perm in ["view_channel", "manage_channels"]:
+                        if not getattr(category.permissions_for(ctx.me), perm):
+                            add_line(
+                                bad,
+                                "CATEGORY_ID",
+                                f'Bot needs "{perm}" permissions on the category',
+                            )
+                checked.add("category_id")
+
+                for key in ["ADMIN_ROLE_ID", "BOTS_ROLE_ID"]:
+                    id = getattr(config, key.lower())
+                    if not id:
+                        add_line(bad, key, "Not configured")
+                    elif not ctx.guild.get_role(id):
+                        add_line(bad, key, "Role not found")
+                    checked.add(key.lower())
+
+                for key in [
+                    "BLACKLIST_ROLE_ID",
+                    "WHITELIST_ROLE_ID",
+                    "ONE_CHANNEL_ROLE_ID",
+                ]:
+                    id = getattr(config, key.lower())
+                    if id and not ctx.guild.get_role(id):
+                        add_line(bad, key, "Role not found")
+                    checked.add(key.lower())
+
+                for perm in ["manage_channels", "manage_roles", "manage_messages"]:
+                    if not getattr(ctx.me.guild_permissions, perm):
+                        add_line(bad, None, f'Bot needs "{perm}" permission')
+
+        unchecked = set(dataclasses.asdict(config).keys()) - checked
+
+        await ctx.respond(
+            "\n".join(
+                [
+                    "Checking bot config:",
+                    *(lines if lines else [":smiling_face_with_3_hearts: All good"]),
+                    *(
+                        ["\nUnchecked values: {', '.join(unchecked)}"]
+                        if unchecked
+                        else []
+                    ),
+                ]
+            ),
+            ephemeral=True,
+        )
 
     ###################
     # Static management
@@ -283,6 +383,7 @@ def make_bot(config: Config) -> Bot:
     )
     @guild_only()
     async def delete(_cog, ctx: ApplicationContext, name: str):
+        """Admin only: Delete a static channel"""
         guild = our_guild(ctx)
         category = our_category(ctx, guild)
         one_channel_role = (
@@ -318,7 +419,7 @@ def make_bot(config: Config) -> Bot:
     )
     @guild_only()
     async def clear(_cog, ctx: ApplicationContext, limit: str):
-        """Deletes recent messages from the channel"""
+        """Admin only: Delete recent messages from the channel"""
         limit_int = int(limit)
         channel = ensure_text_channel(ctx.channel)
 
@@ -328,7 +429,7 @@ def make_bot(config: Config) -> Bot:
     @static.command(name="list", checks=[admin])
     @guild_only()
     async def static_list(_cog, ctx: ApplicationContext):
-        """List all statics along with the time that the last messag was sent"""
+        """Admin only: List all statics along with the time that the last messag was sent"""
 
         async def creator_string(channel: TextChannel):
             try:
@@ -404,6 +505,7 @@ def make_bot(config: Config) -> Bot:
     )
     @guild_only()
     async def add(_cog, ctx: ApplicationContext, name: str):
+        """Add a new member to this static"""
         guild = our_guild(ctx)
         channel = ensure_text_channel(ctx.channel)
 
@@ -424,6 +526,7 @@ def make_bot(config: Config) -> Bot:
     )
     @guild_only()
     async def remove(_cog, ctx: ApplicationContext, name: str):
+        """Remove a member from this static"""
         guild = our_guild(ctx)
         channel = ensure_text_channel(ctx.channel)
 
@@ -437,7 +540,7 @@ def make_bot(config: Config) -> Bot:
     @member.command(name="list")
     @guild_only()
     async def member_list(_cog, ctx: ApplicationContext):
-        """List channel members"""
+        """List static members"""
         channel = ensure_text_channel(ctx.channel)
         members = channel_members(channel)
 
