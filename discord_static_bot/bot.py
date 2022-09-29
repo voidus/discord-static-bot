@@ -6,6 +6,7 @@ from asyncio import gather
 import sys
 import traceback
 from typing import TYPE_CHECKING, Iterable, Literal
+from discord.errors import NotFound
 
 import discord.utils
 from discord import (
@@ -190,7 +191,7 @@ def make_bot(config: Config) -> Bot:
         except ValueError:
             return None
 
-    async def creator(channel: TextChannel) -> Member:
+    async def creator(channel: TextChannel) -> User | Member:
         try:
             [first_message] = await channel.history(
                 limit=1, oldest_first=True
@@ -198,11 +199,11 @@ def make_bot(config: Config) -> Bot:
             [creator, *_] = first_message.mentions
         except ValueError:
             raise CheckFailure(f"Failed to determine creator of {channel.name}")
-        if not isinstance(creator, Member):
-            raise UserVisibleError(
-                f"Expected creator to be a Member, but it's actually a {type(creator)}"
-            )
-        return creator
+
+        if isinstance(creator, User):
+            return await channel.guild.fetch_member(42)
+        else:
+            return creator
 
     def is_admin(member: Member) -> bool:
         return any(r.id == config.admin_role_id for r in member.roles)
@@ -421,7 +422,15 @@ def make_bot(config: Config) -> Bot:
 
         if one_channel_role:
             # Find creator and remove one_channel_role
-            await (await creator(channel)).remove_roles(one_channel_role)
+            the_creator = await creator(channel)
+            try:
+                if isinstance(the_creator, User):
+                    the_creator = await guild.fetch_member(the_creator.id)
+                await the_creator.remove_roles(one_channel_role)
+            except NotFound:
+                await ctx.respond(
+                    f"({the_creator.name} doesn't seem to be on the server anymore)"
+                )
 
         await channel.delete(reason=f"{ctx.author.name} asked to remove it")
         await ctx.respond(f"Group {name} deleted.", ephemeral=True)
