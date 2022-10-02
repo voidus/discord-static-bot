@@ -29,9 +29,8 @@
       {
         packages = {
           default = pkgs.discord-static-bot;
-          docker = pkgs.makeOverridable pkgs.dockerTools.buildImage {
+          docker = pkgs.makeOverridable pkgs.dockerTools.streamLayeredImage {
             name = "discord-static-bot";
-            copyToRoot = with pkgs; [ busybox ];
             config = {
               Env = [
                 "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
@@ -42,14 +41,27 @@
           docker-latest = self.packages.${system}.docker.override (_: {
             tag = "latest";
           });
+          deploy =
+            let
+              image_name = "registry.fly.io/discord-static-bot:latest";
+            in pkgs.writeShellScriptBin "deploy" ''
+              ${self.packages.${system}.docker} | gzip --fast \
+                | ${pkgs.skopeo}/bin/skopeo copy \
+                  docker-archive:/dev/stdin \
+                  docker://${image_name}
+
+              exec ${pkgs.flyctl}/bin/flyctl deploy \
+                --image ${image_name}
+            '';
         };
         apps = {
           # Note that we manually need to remove setuptools from poetry.lock or this will
           # break: https://github.com/nix-community/poetry2nix/issues/648
-          default = {
+          bot = {
             type = "app";
             program = "${pkgs.discord-static-bot}/bin/discord-static-bot";
           };
+          deploy = { type = "app"; program = "${self.packages.${system}.deploy}/bin/deploy"; };
         };
 
         devShell = pkgs.mkShell {
