@@ -1,4 +1,5 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
+import os
 from pathlib import Path
 import json
 from typing import Optional
@@ -23,3 +24,15 @@ class Config:
             conf = json.load(f)
 
         return cls(token=token, **{k.lower(): v for k, v in conf.items()})
+
+    @classmethod
+    def load_from_environment(cls):
+        config = {
+            f.name: os.environ.get(f"DISCORD_STATIC_BOT_{f.name.upper()}") for f in fields(cls)
+        }
+        config = {
+            k: int(v) if v and issubclass(int, cls.__dataclass_fields__[k].type) else v
+            for k, v in config.items()
+        }
+
+        return cls(**config)  # type: ignore
