@@ -6,7 +6,7 @@ from asyncio import gather
 import sys
 import traceback
 from typing import TYPE_CHECKING, Iterable, Literal
-from discord.errors import NotFound
+from discord.errors import Forbidden, NotFound
 
 import discord.utils
 from discord import (
@@ -299,6 +299,23 @@ def make_bot(config: Config) -> Bot:
                     if id and not ctx.guild.get_role(id):
                         add_line(bad, key, "Role not found")
                     checked.add(key.lower())
+
+                one_channel_role = (
+                    ctx.guild.get_role(config.one_channel_role_id)
+                    if config.one_channel_role_id
+                    else None
+                )
+                if one_channel_role:
+                    try:
+                        await ctx.me.add_roles(one_channel_role)
+                    except Forbidden:
+                        add_line(
+                            bad,
+                            "ONE_CHANNEL_ROLE_ID",
+                            "Bot role must be above the one-channel-role for the bot to manage it",
+                        )
+                    else:
+                        await ctx.me.remove_roles(one_channel_role)
 
                 for perm in ["manage_channels", "manage_roles", "manage_messages"]:
                     if not getattr(ctx.me.guild_permissions, perm):
