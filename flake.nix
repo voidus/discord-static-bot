@@ -53,7 +53,10 @@
         };
 
         devShell = pkgs.mkShell {
-          packages = [ pkgs.poetry ];
+          packages = with pkgs; [
+            poetry
+            flyctl
+          ];
         };
       }));
 }
