@@ -29,10 +29,9 @@
       {
         packages = {
           default = pkgs.discord-static-bot;
-          docker-latest = pkgs.dockerTools.buildImage {
+          docker = pkgs.makeOverridable pkgs.dockerTools.buildImage {
             name = "discord-static-bot";
             copyToRoot = with pkgs; [ busybox ];
-            tag = "latest";
             config = {
               Env = [
                 "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
@@ -40,6 +39,9 @@
               EntryPoint = [ "${pkgs.discord-static-bot}/bin/discord-static-bot" ];
             };
           };
+          docker-latest = self.packages.${system}.docker.override (_: {
+            tag = "latest";
+          });
         };
         apps = {
           # Note that we manually need to remove setuptools from poetry.lock or this will

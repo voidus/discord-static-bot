@@ -53,6 +53,12 @@ docker import <result
 
 This is horribly inefficient, especially in regards to network bandwidth. Sorry about that.
 
+You can then run it using
+
+```
+docker run -v /path/to/conf.json:/config -v /path/to/token.txt:/token.txt discord-static-bot /config
+```
+
 # Setup
 
 Create your own bot in https://discord.com/developers/applications
